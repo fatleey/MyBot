@@ -1,7 +1,5 @@
 require('dotenv').config();
 const { Client, GatewayIntentBits, EmbedBuilder, PermissionFlagsBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType } = require('discord.js');
-const sqlite3 = require('sqlite3').verbose();
-
 console.log("🚀 Bot başlatılıyor...");
 
 const client = new Client({
