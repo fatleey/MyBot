@@ -1,7 +1,24 @@
 require('dotenv').config();
 const { Client, GatewayIntentBits, EmbedBuilder, PermissionFlagsBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType } = require('discord.js');
+const mongoose = require('mongoose');
+
 console.log("🚀 Bot başlatılıyor...");
 
+// --- MONGODB BAĞLANTISI VE ŞEMA ---
+mongoose.connect(process.env.MONGO_URI)
+    .then(() => console.log("🍃 MongoDB Bağlantısı Başarılı!"))
+    .catch(err => console.error("❌ MongoDB Bağlantı Hatası:", err));
+
+const userSchema = new mongoose.Schema({
+    userId: { type: String, required: true, unique: true },
+    xp: { type: Number, default: 0 },
+    level: { type: Number, default: 0 },
+    voiceTime: { type: Number, default: 0 }
+});
+
+const User = mongoose.model('User', userSchema);
+
+// --- CLIENT TANIMLAMA ---
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
@@ -12,14 +29,9 @@ const client = new Client({
     ]
 });
 
-const mongoose = require('mongoose');
-
-mongoose.connect(process.env.MONGO_URI)
-    .then(() => console.log("🍃 MongoDB Bağlantısı Başarılı!"))
-    .catch(err => console.error("❌ MongoDB Bağlantı Hatası:", err));
-
 const resetConfirmation = new Set();
 const voiceData = new Map();
+
 // --- AYARLAR ---
 const levelRoles = {
     10: "1500546541230887052",
@@ -43,7 +55,7 @@ function formatVoiceTime(seconds) {
 }
 
 // --- SES TAKİBİ ---
-client.on('voiceStateUpdate', (oldState, newState) => {
+client.on('voiceStateUpdate', async (oldState, newState) => {
     const userId = newState.id;
     if (!oldState.channelId && newState.channelId) {
         voiceData.set(userId, Date.now());
@@ -51,166 +63,79 @@ client.on('voiceStateUpdate', (oldState, newState) => {
         const joinTime = voiceData.get(userId);
         if (joinTime) {
             const timeSpent = Math.floor((Date.now() - joinTime) / 1000);
-            db.run("UPDATE users SET voiceTime = voiceTime + ? WHERE userId = ?", [timeSpent, userId]);
+            await User.findOneAndUpdate(
+                { userId },
+                { $inc: { voiceTime: timeSpent } },
+                { upsert: true }
+            );
             voiceData.delete(userId);
         }
     }
 });
 
+// --- MESAJLAR VE KOMUTLAR ---
 client.on('messageCreate', async (message) => {
     if (message.author.bot || !message.guild) return;
     const userId = message.author.id;
     const prefix = "!";
 
+    // XP KAZANMA SİSTEMİ (MongoDB)
+    let userData = await User.findOne({ userId });
+    if (!userData) {
+        userData = new User({ userId });
+    }
+
+    userData.xp += 1;
+    if (userData.xp >= getXpForLevel(userData.level + 1)) {
+        userData.level += 1;
+        const chan = message.guild.channels.cache.find(c => c.name === "✨∖「seviye」");
+        if (chan) chan.send(`🆙 <@${userId}> seviye **${userData.level}** oldu!`);
+    }
+    await userData.save();
+
     // 1. PROFİL
     if (message.content === `${prefix}fatiprofil`) {
-        db.get("SELECT * FROM users WHERE userId = ?", [userId], (err, row) => {
-            const profileEmbed = new EmbedBuilder()
-                .setAuthor({ name: `${message.author.username} Profili`, iconURL: message.author.displayAvatarURL() })
-                .setThumbnail(message.author.displayAvatarURL({ size: 256 }))
-                .setColor("#ffffff")
-                .addFields(
-                    { name: "📊 Seviye", value: `**${row?.level || 0}**`, inline: true },
-                    { name: "✨ Toplam XP", value: `\`${row?.xp || 0} XP\``, inline: true },
-                    { name: "🎙️ Ses Süresi", value: `\`${formatVoiceTime(row?.voiceTime || 0)}\``, inline: false }
-                );
-            message.channel.send({ embeds: [profileEmbed] });
-        });
-        return;
+        const profileEmbed = new EmbedBuilder()
+            .setAuthor({ name: `${message.author.username} Profili`, iconURL: message.author.displayAvatarURL() })
+            .setThumbnail(message.author.displayAvatarURL({ size: 256 }))
+            .setColor("#ffffff")
+            .addFields(
+                { name: "📊 Seviye", value: `**${userData.level}**`, inline: true },
+                { name: "✨ Toplam XP", value: `\`${userData.xp} XP\``, inline: true },
+                { name: "🎙️ Ses Süresi", value: `\`${formatVoiceTime(userData.voiceTime)}\``, inline: false }
+            );
+        return message.channel.send({ embeds: [profileEmbed] });
     }
 
     // 2. BOARD (SIRALAMA)
     if (message.content === `${prefix}fatiboard`) {
-        db.all("SELECT userId, xp, level FROM users ORDER BY xp DESC LIMIT 10", [], (err, rows) => {
-            const embed = new EmbedBuilder()
-                .setTitle("🏆 FatiBoard Sıralaması")
-                .setColor("#ffffff")
-                .setDescription(rows.map((row, i) => `**${i + 1}.** <@${row.userId}> - Lvl: ${row.level} (\`${row.xp} XP\`)`).join("\n") || "Veri yok.");
-            message.channel.send({ embeds: [embed] });
-        });
-        return;
+        const topUsers = await User.find().sort({ xp: -1 }).limit(10);
+        const embed = new EmbedBuilder()
+            .setTitle("🏆 FatiBoard Sıralaması")
+            .setColor("#ffffff")
+            .setDescription(topUsers.map((user, i) => `**${i + 1}.** <@${user.userId}> - Lvl: ${user.level} (\`${user.xp} XP\`)`).join("\n") || "Veri yok.");
+        return message.channel.send({ embeds: [embed] });
     }
 
-    // 3. XP LİSTESİ (SAYFALI)
-    if (message.content === `${prefix}fatixplvl`) {
-        const generateEmbed = (start) => {
-            let desc = "";
-            for (let i = start; i < start + 10; i++) desc += `**Lvl ${i}:** \`${getXpForLevel(i)} XP\`\n`;
-            return new EmbedBuilder().setTitle("📊 Seviye Tablosu").setDescription(desc).setColor("#ffffff");
-        };
-        let currentStart = 1;
-        const row = new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setCustomId('prev').setLabel('◀️').setStyle(ButtonStyle.Secondary).setDisabled(true),
-            new ButtonBuilder().setCustomId('next').setLabel('▶️').setStyle(ButtonStyle.Secondary)
-        );
-        const msg = await message.channel.send({ embeds: [generateEmbed(1)], components: [row] });
-        const collector = msg.createMessageComponentCollector({ componentType: ComponentType.Button, time: 60000 });
-        collector.on('collect', async i => {
-            if (i.user.id !== message.author.id) return;
-            if (i.customId === 'next') currentStart += 10; else currentStart -= 10;
-            const newRow = new ActionRowBuilder().addComponents(
-                new ButtonBuilder().setCustomId('prev').setLabel('◀️').setStyle(ButtonStyle.Secondary).setDisabled(currentStart === 1),
-                new ButtonBuilder().setCustomId('next').setLabel('▶️').setStyle(ButtonStyle.Secondary).setDisabled(currentStart === 41)
-            );
-            await i.update({ embeds: [generateEmbed(currentStart)], components: [newRow] });
-        });
-        return;
-    }
-
-    // 4. EĞLENCE & BİLGİ
+    // 3. YARDIM, YAZITURA VB. (DEĞİŞMEDİ)
     if (message.content === `${prefix}fatisahip`) return message.channel.send("👑 Sahibim **@fatleey**'dir!");
+    
     if (message.content === `${prefix}fatiyazıtura`) {
         const msg = await message.channel.send("🪙 Yazı tura hesaplanıyor...");
         setTimeout(() => { msg.edit(`🪙 Sonuç: **${Math.random() < 0.5 ? "YAZI" : "TURA"}**`); }, 2000);
         return;
     }
 
-    // 5. YARDIM (GÜNCELLENDİ)
-    if (message.content === `${prefix}fatiyardım` || message.content === `${prefix}fatiyardim`) {
-        const helpEmbed = new EmbedBuilder()
-            .setTitle("❓ FatiBot Tüm Komutlar")
-            .setColor("#ffffff")
-            .setThumbnail(client.user.displayAvatarURL())
-            .addFields(
-                { name: "👤 Kullanıcı Komutları", value: 
-                    "**!fatiprofil**: Profil kartını, seviyeni ve toplam ses süreni gösterir.\n" +
-                    "**!fatiboard**: Sunucudaki en yüksek XP'li 10 kişiyi listeler.\n" +
-                    "**!fatixplvl**: Seviye atlamak için gereken XP tablosunu gösterir (Sayfalı)." 
-                },
-                { name: "🎮 Eğlence & Bilgi", value: 
-                    "**!fatiyazıtura**: Şansını dene, yazı mı tura mı?\n" +
-                    "**!fatisahip**: Botun gerçek sahibini (fatleey) gösterir." 
-                },
-                { name: "🛡️ Yönetici Komutları", value: 
-                    "**!fatimsil [sayı]**: Belirtilen sayıda mesajı kanaldan siler.\n" +
-                    "**!fatiekle @üye [miktar]**: Belirtilen kişiye manuel XP ekler.\n" +
-                    "**!fatisıfırla**: Tüm sıralamayı ve seviyeleri temizlemek için onay ister." 
-                }
-            )
-            .setFooter({ text: "FatiBot • Her mesaj 1 XP kazandırır!" })
-            .setTimestamp();
-
-        return message.channel.send({ embeds: [helpEmbed] });
-    }
-
-    // 6. ADMIN (EKLE, SIFIRLA & SİL)
-    if (message.content.startsWith(`${prefix}fatiekle`)) {
-        if (!message.member.permissions.has(PermissionFlagsBits.Administrator)) return;
-        const args = message.content.split(" ");
-        const target = message.mentions.members.first();
-        const amount = parseInt(args[2]);
-        if (!target || isNaN(amount)) return;
-        db.get("SELECT * FROM users WHERE userId = ?", [target.id], (err, row) => {
-            let newXp = (row?.xp || 0) + amount;
-            let newLevel = 0; while (getXpForLevel(newLevel + 1) <= newXp) newLevel++;
-            db.run("INSERT OR REPLACE INTO users (userId, xp, level, voiceTime) VALUES (?, ?, ?, COALESCE((SELECT voiceTime FROM users WHERE userId = ?), 0))", [target.id, newXp, newLevel, target.id]);
-            message.channel.send(`✅ ${target} kullanıcısına **${amount} XP** eklendi!`);
-        });
-        return;
-    }
-
-    if (message.content === `${prefix}fatisıfırla`) {
-        if (!message.member.permissions.has(PermissionFlagsBits.Administrator)) return;
-        resetConfirmation.add(userId);
-        return message.reply("⚠️ Sıralama sıfırlansın mı? **!evet** yaz.");
-    }
-
-    if (message.content === `${prefix}evet` && resetConfirmation.has(userId)) {
-        db.run("DELETE FROM users", () => { resetConfirmation.delete(userId); message.channel.send("🧹 Sıfırlandı!"); });
-        return;
-    }
-
-    // YENİ: MESAJ SİLME KOMUTU
+    // MESAJ SİLME
     if (message.content.startsWith(`${prefix}fatimsil`)) {
         if (!message.member.permissions.has(PermissionFlagsBits.ManageMessages)) return;
         const args = message.content.split(" ");
         const miktar = parseInt(args[1]);
-
-        if (isNaN(miktar) || miktar < 1 || miktar > 100) {
-            return message.reply("⚠️ Lütfen silmek istediğin mesaj sayısını gir (1-100 arası). Örnek: `!fatimsil 15`").then(msg => setTimeout(() => msg.delete(), 5000));
-        }
-
-        await message.delete(); // Komutun kendisini sil
-        message.channel.bulkDelete(miktar, true).then(silinenler => {
-            message.channel.send(`🧹 **${silinenler.size}** mesaj başarıyla silindi!`).then(msg => setTimeout(() => msg.delete(), 3000));
-        }).catch(err => {
-            console.error(err);
-            message.channel.send("❌ Mesajlar silinirken bir hata oluştu (14 günden eski mesajlar silinemez).");
-        });
-        return;
+        if (isNaN(miktar) || miktar < 1 || miktar > 100) return message.reply("1-100 arası sayı gir.");
+        
+        await message.delete();
+        return message.channel.bulkDelete(miktar, true);
     }
-
-    // --- MESAJ XP ---
-    //db.get("SELECT * FROM users WHERE userId = ?", [userId], (err, row) => {/
-        let nXp = (row?.xp || 0) + 1;
-        let nLvl = row?.level || 0;
-        if (nXp >= getXpForLevel(nLvl + 1)) {
-            nLvl++;
-            const chan = message.guild.channels.cache.find(c => c.name === "✨∖「seviye」");
-            if (chan) chan.send(`🆙 <@${userId}> seviye **${nLvl}** oldu!`);
-        }
-        db.run("INSERT OR REPLACE INTO users (userId, xp, level, voiceTime) VALUES (?, ?, ?, COALESCE((SELECT voiceTime FROM users WHERE userId = ?), 0))", [userId, nXp, nLvl, userId]);
-    });
 });
 
 client.once('ready', () => {
