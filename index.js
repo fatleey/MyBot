@@ -201,7 +201,7 @@ client.on('messageCreate', async (message) => {
     }
 
     // --- MESAJ XP ---
-    db.get("SELECT * FROM users WHERE userId = ?", [userId], (err, row) => {
+    //db.get("SELECT * FROM users WHERE userId = ?", [userId], (err, row) => {/
         let nXp = (row?.xp || 0) + 1;
         let nLvl = row?.level || 0;
         if (nXp >= getXpForLevel(nLvl + 1)) {
