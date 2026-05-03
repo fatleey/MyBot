@@ -12,6 +12,14 @@ const client = new Client({
     ]
 });
 
+const mongoose = require('mongoose');
+
+mongoose.connect(process.env.MONGO_URI)
+    .then(() => console.log("🍃 MongoDB Bağlantısı Başarılı!"))
+    .catch(err => console.error("❌ MongoDB Bağlantı Hatası:", err));
+
+const resetConfirmation = new Set();
+const voiceData = new Map();
 // --- AYARLAR ---
 const levelRoles = {
     10: "1500546541230887052",
