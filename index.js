@@ -12,18 +12,6 @@ const client = new Client({
     ]
 });
 
-const db = new sqlite3.Database('./levels.sqlite', (err) => {
-    if (err) console.error("❌ Veritabanı hatası:", err.message);
-    else console.log("📂 Veritabanı bağlantısı başarılı.");
-});
-
-const resetConfirmation = new Set();
-const voiceData = new Map();
-
-db.serialize(() => {
-    db.run("CREATE TABLE IF NOT EXISTS users (userId TEXT PRIMARY KEY, xp INTEGER, level INTEGER, voiceTime INTEGER DEFAULT 0)");
-});
-
 // --- AYARLAR ---
 const levelRoles = {
     10: "1500546541230887052",
