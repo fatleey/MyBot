@@ -124,6 +124,32 @@ client.on('messageCreate', async (message) => {
         const msg = await message.channel.send("🪙 Yazı tura hesaplanıyor...");
         setTimeout(() => { msg.edit(`🪙 Sonuç: **${Math.random() < 0.5 ? "YAZI" : "TURA"}**`); }, 2000);
         return;
+    // 5. YARDIM KOMUTU
+    if (message.content === `${prefix}fatiyardım` || message.content === `${prefix}fatiyardim`) {
+        const helpEmbed = new EmbedBuilder()
+            .setTitle("❓ FatiBot Tüm Komutlar")
+            .setColor("#ffffff")
+            .setThumbnail(client.user.displayAvatarURL())
+            .addFields(
+                { name: "👤 Kullanıcı Komutları", value: 
+                    "**!fatiprofil**: Profilini, seviyeni ve ses süreni gösterir.\n" +
+                    "**!fatiboard**: En yüksek XP'li 10 kişiyi listeler.\n" +
+                    "**!fatixplvl**: Seviye XP tablosunu gösterir." 
+                },
+                { name: "🎮 Eğlence & Bilgi", value: 
+                    "**!fatiyazıtura**: Yazı tura atar.\n" +
+                    "**!fatisahip**: Botun sahibini gösterir." 
+                },
+                { name: "🛡️ Yönetici Komutları", value: 
+                    "**!fatimsil [sayı]**: Mesajları toplu siler.\n" +
+                    "**!fatisıfırla**: Verileri sıfırlamak için onay ister." 
+                }
+            )
+            .setFooter({ text: "FatiBot • Her mesaj 1 XP kazandırır!" })
+            .setTimestamp();
+
+        return message.channel.send({ embeds: [helpEmbed] });
+    }
     }
 
     // MESAJ SİLME
